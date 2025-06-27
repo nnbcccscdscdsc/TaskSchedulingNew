@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>表单验证示例</title>
+</head>
+<body>
+    <form id="myForm">
+        <!-- 姓名字段（必填） -->
+        <label for="name">姓名：</label>
+        <input type="text" id="name">
+        <span id="nameError" class="error"></span><br>
+        
+        <!-- 邮箱字段（格式验证） -->
+        <label for="email">邮箱：</label>
+        <input type="email" id="email">
+        <span id="emailError" class="error"></span><br>
+        
+        <!-- 密码字段（长度验证） -->
+        <label for="password">密码：</label>
+        <input type="password" id="password">
+        <span id="passwordError" class="error"></span><br>
+        
+        <button type="submit">提交</button>
+    </form>
+
+    <script>
+        document.getElementById('myForm').addEventListener('submit', function(e) {
+            e.preventDefault(); // 阻止默认提交
+            let isValid = true;
+            
+            // 重置错误信息
+            document.querySelectorAll('.error').forEach(el => el.textContent = '');
+            
+            // 验证姓名（非空）
+            const name = document.getElementById('name').value.trim();
+            if (!name) {
+                document.getElementById('nameError').textContent = '姓名不能为空';
+                isValid = false;
+            }
+            
+            // 验证邮箱（正则表达式）
+            const email = document.getElementById('email').value;
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; // 邮箱格式验证
+            if (!emailRegex.test(email)) {
+                document.getElementById('emailError').textContent = '邮箱格式无效';
+                isValid = false;
+            }
+            
+            // 验证密码（长度≥6）
+            const password = document.getElementById('password').value;
+            if (password.length < 6) {
+                document.getElementById('passwordError').textContent = '密码至少6个字符';
+                isValid = false;
+            }
+            
+            // 全部验证通过
+            if (isValid) {
+                alert('表单验证成功！');
+                // 此处可添加表单提交代码（如：this.submit()）
+            }
+        });
+    </script>
+    
+    <style>
+        .error {
+            color: red;
+            font-size: 0.8em;
+            margin-left: 10px;
+        }
+    </style>
+</body>
+</html>
