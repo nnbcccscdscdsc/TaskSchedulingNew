@@ -1,0 +1,28 @@
+use crate::task::{MoeTask, TaskStatus};
+use crate::config::SchedulerConfig;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+
+pub struct TaskScheduler {
+    pub config: SchedulerConfig,
+    pub queue: Arc<Mutex<VecDeque<MoeTask>>>,
+}
+
+impl TaskScheduler {
+    pub fn new(config: SchedulerConfig) -> Self {
+        Self {
+            config,
+            queue: Arc::new(Mutex::new(VecDeque::new())),
+        }
+    }
+
+    pub fn submit_task(&self, task: MoeTask) {
+        let mut queue = self.queue.lock().unwrap();
+        queue.push_back(task);
+    }
+
+    pub fn fetch_next_task(&self) -> Option<MoeTask> {
+        let mut queue = self.queue.lock().unwrap();
+        queue.pop_front()
+    }
+}
