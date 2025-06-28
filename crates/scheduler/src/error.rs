@@ -1,16 +1,24 @@
 use std::fmt;
 use std::io;
 
+/// 项目通用错误类型，涵盖IO、CUDA、模型加载、推理、GPU等错误
 #[derive(Debug)]
 pub enum Error {
+    /// IO错误
     Io(io::Error),
+    /// CUDA相关错误
     CudaError(rustacuda::error::CudaError),
+    /// 模型加载错误
     ModelLoadError(String),
+    /// 推理阶段错误
     InferenceError(String),
+    /// GPU资源相关错误
     GpuError(String),
+    /// 其他类型错误
     Other(String),
 }
 
+/// 通用结果类型
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl From<io::Error> for Error {
