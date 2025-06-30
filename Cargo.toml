@@ -1,28 +1,19 @@
-use crate::task::{MoeTask, TaskStatus};
-use crate::config::SchedulerConfig;
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+[package]
+name = "task-scheduling"
+version = "0.1.0"
+edition = "2021"
 
-pub struct TaskScheduler {
-    pub config: SchedulerConfig,
-    pub queue: Arc<Mutex<VecDeque<MoeTask>>>,
-}
+[workspace]
+members = ["crates/scheduler"]
 
-impl TaskScheduler {
-    pub fn new(config: SchedulerConfig) -> Self {
-        Self {
-            config,
-            queue: Arc::new(Mutex::new(VecDeque::new())),
-        }
-    }
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+rustacuda = "0.1"
+uuid = { version = "1.0", features = ["v4"] }
+rand = "0.8"
+anyhow = "1.0"
+serde_json = "1.0"
 
-    pub fn submit_task(&self, task: MoeTask) {
-        let mut queue = self.queue.lock().unwrap();
-        queue.push_back(task);
-    }
-
-    pub fn fetch_next_task(&self) -> Option<MoeTask> {
-        let mut queue = self.queue.lock().unwrap();
-        queue.pop_front()
-    }
-}
+[[example]]
+name = "download_and_split_example"
+path = "examples/download_and_split_example.rs"

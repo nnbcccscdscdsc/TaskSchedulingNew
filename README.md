@@ -8,12 +8,13 @@
 - WASI-NN适配
 
 ## 目录结构
-- crates/scheduler/src/error.rs: 错误类型定义
-- crates/scheduler/src/config.rs: 配置结构体
-- crates/scheduler/src/task.rs: 任务结构体
-- crates/scheduler/src/scheduler.rs: 任务调度器
-- crates/scheduler/lib.rs: 模块导出
-
+- crates/scheduler/src/
+  - task_splitter.rs      // 任务拆分器
+  - data_preparator.rs    // 数据准备器
+  - result_merger.rs      // 结果合并器
+  - task_executor.rs      // 任务执行器
+  - types.rs              // 通用类型
+  - mod.rs                // 统一导出
 ## 依赖
 - rustacuda
 - serde

@@ -13,6 +13,15 @@ pub enum TaskStatus {
     Failed(String),
 }
 
+/// 任务优先级
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TaskPriority {
+    Low = 0,
+    Normal = 1,
+    High = 2,
+    Critical = 3,
+}
+
 /// MOE任务结构体，包含任务ID、输入数据、状态和结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoeTask {
@@ -24,4 +33,10 @@ pub struct MoeTask {
     pub status: TaskStatus,
     /// 推理结果（字节流），仅在Completed时有值
     pub result: Option<Vec<u8>>,
+    /// 任务优先级
+    pub priority: TaskPriority,
+    /// 分配的GPU ID
+    pub gpu_id: Option<i32>,
+    /// 父任务ID（用于子任务）
+    pub parent_task_id: Option<String>,
 }

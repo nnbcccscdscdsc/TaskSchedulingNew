@@ -1,6 +1,12 @@
+[package]
+name = "scheduler"
+version = "0.1.0"
+edition = "2021"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 rustacuda = "0.1"
 uuid = { version = "1.0", features = ["v4"] }
 rand = "0.8"
 anyhow = "1.0"
+serde_json = "1.0"
