@@ -1,6 +1,6 @@
 // result_merger.rs
 // 结果合并器，负责合并各子任务（如专家、层、批次等）的推理结果。
-use crate::model_downloader::ModelInfo;
+use crate::config::ModelInfo;
 use crate::error::{Error, Result};
 use crate::types::*;
 use crate::task_splitter::SplitStrategy;
@@ -17,22 +17,43 @@ impl ResultMerger {
         Self { model_info }
     }
 
-    // 合并结果
-    pub fn merge_results(&self, results: &[Vec<u8>], gate_weights: Option<GateWeights>, strategy: &SplitStrategy) -> Result<Vec<u8>> {
+    /// 合并多个子任务的结果
+    pub fn merge_results(
+        &self, 
+        results: &[Vec<u8>], 
+        gate_weights: Option<GateWeights>, 
+        strategy: &SplitStrategy
+    ) -> Result<Vec<u8>> {
         match strategy {
-            SplitStrategy::ByExpert => self.merge_expert_results(results, gate_weights),
+            SplitStrategy::ByExpert => {
+                // 如果是按专家拆分，必须有门控权重才能进行有意义的合并
+                // 在模拟场景下，如果权重为 None，我们可以采取一种简化的合并策略，例如拼接
+                if gate_weights.is_none() {
+                    println!("警告：缺少门控权重，将使用简单的拼接策略合并专家结果。");
+                    return self.concatenate_results(results);
+                }
+                self.merge_expert_results(results, gate_weights.unwrap())
+            },
             SplitStrategy::ByLayer => self.merge_layer_results(results),
             SplitStrategy::ByBatch { .. } => self.merge_batch_results(results),
             SplitStrategy::Hybrid { .. } => self.merge_hybrid_results(results, gate_weights),
+            _ => {
+                // 对于其他策略，暂时使用简单的拼接
+                self.concatenate_results(results)
+            }
         }
     }
 
+    /// 将所有结果简单地拼接在一起
+    fn concatenate_results(&self, results: &[Vec<u8>]) -> Result<Vec<u8>> {
+        Ok(results.concat())
+    }
+
     // 合并专家结果 加权求和
-    fn merge_expert_results(&self, results: &[Vec<u8>], gate_weights: Option<GateWeights>) -> Result<Vec<u8>> {
+    fn merge_expert_results(&self, results: &[Vec<u8>], gate_weights: GateWeights) -> Result<Vec<u8>> {
         if results.is_empty() {
             return Err(Error::InferenceError("没有专家结果可合并".to_string()));
         }
-        let gate_weights = gate_weights.ok_or_else(|| Error::InferenceError("专家结果合并需要门控权重".to_string()))?;
         if results.len() != self.model_info.num_experts {
             return Err(Error::InferenceError(format!("专家结果数量 {} 与专家数量 {} 不匹配", results.len(), self.model_info.num_experts)));
         }
@@ -121,7 +142,7 @@ impl ResultMerger {
             let layer_start = layer_id * num_experts;
             let layer_end = layer_start + num_experts;
             let layer_expert_results = &results[layer_start..layer_end];
-            let layer_result = self.merge_expert_results(layer_expert_results, gate_weights.clone())?;
+            let layer_result = self.merge_expert_results(layer_expert_results, gate_weights.clone().unwrap())?;
             layer_results.push(layer_result);
         }
         self.merge_layer_results(&layer_results)

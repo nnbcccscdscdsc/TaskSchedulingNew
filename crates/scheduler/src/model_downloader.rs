@@ -1,6 +1,7 @@
 // model_downloader.rs
 // 模型下载器，支持从Hugging Face等平台下载Switch Transformer模型及其配置信息。
 use crate::error::{Error, Result};
+use crate::config::ModelInfo; // 导入统一管理的 ModelInfo
 use std::path::Path;
 use std::fs;
 use std::process::Command;
@@ -29,10 +30,17 @@ impl ModelDownloader {
 
     /// 下载Switch Transformer模型
     pub fn download_switch_transformer(&self, model_name: &str) -> Result<String> {
+        let model_dir = format!("{}/{}", self.cache_dir, model_name);
+
+        // 检查模型是否已存在且完整，如果是，则跳过下载
+        if Path::new(&model_dir).exists() && self.verify_model(&model_dir).is_ok() {
+            println!("模型 '{}' 已存在且文件完整，跳过下载。", model_name);
+            return Ok(model_dir);
+        }
+        
         println!("开始下载Switch Transformer模型: {}", model_name);
         
         // 创建缓存目录
-        let model_dir = format!("{}/{}", self.cache_dir, model_name);
         fs::create_dir_all(&model_dir)?;
         
         // 使用Python脚本下载模型
@@ -129,18 +137,26 @@ if __name__ == "__main__":
 
     /// 验证下载的模型
     pub fn verify_model(&self, model_dir: &str) -> Result<bool> {
-        let required_files = [
-            "config.json",
-            "tokenizer.json", 
-            "pytorch_model.bin",
-            "special_tokens_map.json"
-        ];
+        let model_path = Path::new(model_dir);
         
-        for file in &required_files {
-            let file_path = format!("{}/{}", model_dir, file);
-            if !Path::new(&file_path).exists() {
-                return Err(Error::ModelLoadError(format!("缺少必要文件: {}", file)));
-            }
+        // 检查配置文件
+        if !model_path.join("config.json").exists() {
+            return Err(Error::ModelLoadError("缺少必要文件: config.json".to_string()));
+        }
+
+        // 检查 tokenizer
+        if !model_path.join("tokenizer.json").exists() {
+            return Err(Error::ModelLoadError("缺少必要文件: tokenizer.json".to_string()));
+        }
+
+        // 检查模型权重文件（支持 .bin 和 .safetensors 两种格式）
+        let has_bin = model_path.join("pytorch_model.bin").exists();
+        let has_safetensors = model_path.join("model.safetensors").exists();
+
+        if !has_bin && !has_safetensors {
+            return Err(Error::ModelLoadError(
+                "缺少模型权重文件 (pytorch_model.bin 或 model.safetensors)".to_string()
+            ));
         }
         
         Ok(true)
@@ -148,28 +164,18 @@ if __name__ == "__main__":
 
     /// 获取模型配置信息
     pub fn get_model_info(&self, model_dir: &str) -> Result<ModelInfo> {
-        let config_path = format!("{}/config.json", model_dir);
-        let config_content = fs::read_to_string(config_path)?;
-        let config: serde_json::Value = serde_json::from_str(&config_content)?;
+        let config_path = Path::new(model_dir).join("config.json");
+        let config_content = fs::read_to_string(config_path)
+            .map_err(|e| Error::ModelLoadError(format!("无法读取模型配置文件: {}", e)))?;
         
-        Ok(ModelInfo {
-            model_type: config["model_type"].as_str().unwrap_or("unknown").to_string(),
-            num_experts: config["num_experts"].as_u64().unwrap_or(0) as usize,
-            hidden_size: config["hidden_size"].as_u64().unwrap_or(0) as usize,
-            intermediate_size: config["intermediate_size"].as_u64().unwrap_or(0) as usize,
-            num_layers: config["num_layers"].as_u64().unwrap_or(0) as usize,
-        })
+        // 使用在 config.rs 中定义的辅助结构体来反序列化
+        // 这样可以处理字段名不匹配的问题，并且类型更安全
+        let config_json: super::config::ModelConfigJson = serde_json::from_str(&config_content)
+            .map_err(|e| Error::ModelLoadError(format!("解析模型配置文件失败: {}", e)))?;
+        
+        // 将解析后的结构体转换为内部使用的 ModelInfo
+        Ok(config_json.into())
     }
-}
-
-/// 模型信息结构体
-#[derive(Debug, Clone)]
-pub struct ModelInfo {
-    pub model_type: String,
-    pub num_experts: usize,
-    pub hidden_size: usize,
-    pub intermediate_size: usize,
-    pub num_layers: usize,
 }
 
 /// 常用的Switch Transformer模型列表

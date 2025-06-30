@@ -37,8 +37,8 @@ pub struct MoeTask {
     pub result: Option<Vec<u8>>,
     /// 任务优先级
     pub priority: TaskPriority,
-    /// 分配的GPU ID
-    pub gpu_id: Option<i32>,
+    /// 分配的逻辑流ID（可用于CUDA Stream或并发任务标识）
+    pub stream_id: Option<usize>,
     /// 父任务ID（用于子任务）
     pub parent_task_id: Option<String>,
 }

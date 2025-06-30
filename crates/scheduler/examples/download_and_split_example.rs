@@ -3,18 +3,25 @@ use scheduler::{
     task_splitter::{TaskSplitter, SplitStrategy},
     config::SchedulerConfig,
     scheduler::TaskScheduler,
-    task::MoeTask,
+    task_executor::TaskExecutor,
+    task::{MoeTask, TaskPriority},
     error::Result,
 };
-use std::collections::HashMap;
 use uuid::Uuid;
+use std::fs;
+use tempfile::tempdir;
 
 /// 下载Switch Transformer模型并进行任务拆分的完整示例
 fn main() -> Result<()> {
     println!("=== Switch Transformer模型下载与任务拆分示例 ===");
     
-    // 1. 创建模型下载器
-    let mut downloader = ModelDownloader::new("./models".to_string());
+    // 1. 创建任务执行器
+    println!("初始化任务执行器...");
+    let executor = TaskExecutor::new(0)?;
+    println!("任务执行器初始化成功！");
+    
+    // 1. 创建模型下载器，使用正确的模型缓存目录
+    let mut downloader = ModelDownloader::new("downloads".to_string());
     
     // 使用镜像源加速下载（可选）
     downloader.use_mirror(true);
@@ -42,22 +49,15 @@ fn main() -> Result<()> {
     
     // 6. 创建任务拆分器
     let strategy = SplitStrategy::ByExpert; // 按专家拆分
-    let mut splitter = TaskSplitter::new(model_info.clone(), strategy);
+    let splitter = TaskSplitter::new(model_info.clone(), strategy);
     
-    // 7. 设置专家到GPU的映射（如果有多个GPU）
-    let mut expert_gpu_mapping = HashMap::new();
-    for expert_id in 0..model_info.num_experts {
-        expert_gpu_mapping.insert(expert_id, (expert_id % 2) as i32); // 分配到2个GPU
-    }
-    splitter.set_expert_gpu_mapping(expert_gpu_mapping);
-    
-    // 8. 准备输入数据
+    // 7. 准备输入数据
     let input_data = prepare_sample_input(&model_info);
     println!("准备输入数据，大小: {} 字节", input_data.len());
     
-    // 9. 拆分任务
+    // 8. 拆分任务
     let parent_task_id = format!("moe_task_{}", Uuid::new_v4());
-    let sub_tasks = splitter.split_task(&input_data, &parent_task_id)?;
+    let sub_tasks = splitter.split_task(&input_data, &parent_task_id, TaskPriority::Normal)?;
     println!("任务拆分完成，共生成 {} 个子任务", sub_tasks.len());
     
     // 10. 创建调度器
@@ -70,15 +70,15 @@ fn main() -> Result<()> {
     }
     println!("所有子任务已提交到调度器");
     
-    // 12. 模拟任务执行和结果收集
-    simulate_task_execution(&scheduler, &splitter)?;
+    // 12. 执行真实的任务并收集结果
+    run_real_execution(&scheduler, &splitter, &executor)?;
     
     println!("=== 示例执行完成 ===");
     Ok(())
 }
 
 /// 准备示例输入数据
-fn prepare_sample_input(model_info: &scheduler::model_downloader::ModelInfo) -> Vec<u8> {
+fn prepare_sample_input(model_info: &scheduler::config::ModelInfo) -> Vec<u8> {
     // 创建一个简单的输入张量（序列化为字节）
     let input_size = model_info.hidden_size;
     let mut input_data = Vec::new();
@@ -95,75 +95,45 @@ fn prepare_sample_input(model_info: &scheduler::model_downloader::ModelInfo) -> 
     input_data
 }
 
-/// 模拟任务执行过程
-fn simulate_task_execution(
+/// 运行真实的执行过程，并收集结果
+fn run_real_execution(
     scheduler: &TaskScheduler, 
-    splitter: &TaskSplitter
+    splitter: &TaskSplitter,
+    executor: &TaskExecutor,
 ) -> Result<()> {
-    println!("开始模拟任务执行...");
+    println!("\n开始执行真实任务...");
     
     let mut completed_tasks = Vec::new();
     let mut results = Vec::new();
     
     // 模拟获取和执行任务
     while let Some(mut task) = scheduler.fetch_next_task() {
-        println!("执行任务: {}", task.task_id);
-        
-        // 更新任务状态
-        task.status = scheduler::task::TaskStatus::Running;
-        
-        // 模拟计算过程
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        
-        // 生成模拟结果
-        let result_data = generate_mock_result(&task);
-        task.result = Some(result_data.clone());
-        task.status = scheduler::task::TaskStatus::Completed;
-        
-        completed_tasks.push(task);
-        results.push(result_data);
-        
-        println!("任务完成: {}", task.task_id);
+        // 使用 executor 执行真实的任务
+        match executor.execute_task(&task) {
+            Ok(result_data) => {
+                task.status = scheduler::task::TaskStatus::Completed;
+                task.result = Some(result_data.clone());
+                
+                println!("任务完成: {}", task.task_id);
+                completed_tasks.push(task);
+                results.push(result_data);
+            }
+            Err(e) => {
+                task.status = scheduler::task::TaskStatus::Failed(e.to_string());
+                eprintln!("任务 {} 执行失败: {}", task.task_id, e);
+                // 可以在这里实现任务失败后的重试或错误处理逻辑
+            }
+        }
     }
     
     // 合并结果
-    let final_result = splitter.merge_results(&results)?;
+    let final_result = splitter.result_merger.merge_results(&results, None, &splitter.strategy)?;
     println!("结果合并完成，最终结果大小: {} 字节", final_result.len());
     
     // 验证结果
     validate_final_result(&final_result)?;
     
     Ok(())
-}
-
-/// 生成模拟结果
-fn generate_mock_result(task: &MoeTask) -> Vec<u8> {
-    // 从任务ID中提取专家ID
-    let expert_id = if task.task_id.contains("expert_") {
-        let parts: Vec<&str> = task.task_id.split("expert_").collect();
-        if parts.len() > 1 {
-            parts[1].parse::<u32>().unwrap_or(0)
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-    
-    // 生成模拟输出
-    let output_size = 1024; // 假设输出大小
-    let mut result = Vec::new();
-    
-    // 添加专家ID
-    result.extend_from_slice(&expert_id.to_le_bytes());
-    
-    // 添加模拟输出数据
-    for i in 0..output_size {
-        let value = ((i + expert_id as usize) % 100) as f32 / 100.0;
-        result.extend_from_slice(&value.to_le_bytes());
-    }
-    
-    result
 }
 
 /// 验证最终结果
@@ -207,18 +177,32 @@ mod tests {
     }
     
     #[test]
-    fn test_task_splitter_creation() {
-        let model_info = scheduler::model_downloader::ModelInfo {
-            model_type: "switch_transformer".to_string(),
-            num_experts: 8,
-            hidden_size: 512,
-            intermediate_size: 2048,
-            num_layers: 12,
-        };
+    fn test_task_splitter_creation() -> Result<()> {
+        // 创建一个临时目录来模拟模型文件夹
+        let dir = tempdir()?;
+        let model_dir = dir.path();
+
+        // 在临时目录中创建一个模拟的 config.json
+        let config_content = r#"
+        {
+          "model_type": "switch_transformers",
+          "num_experts": 8,
+          "d_model": 512,
+          "d_ff": 2048,
+          "num_layers": 12
+        }
+        "#;
+        fs::write(model_dir.join("config.json"), config_content)?;
+
+        // 使用 downloader 从这个模拟的 config.json 加载信息
+        let downloader = ModelDownloader::new(model_dir.to_str().unwrap().to_string());
+        let model_info = downloader.get_model_info(model_dir.to_str().unwrap())?;
         
         let strategy = SplitStrategy::ByExpert;
         let splitter = TaskSplitter::new(model_info, strategy);
         
         assert_eq!(splitter.expert_gpu_mapping.len(), 0);
+        assert_eq!(splitter.strategy, strategy);
+        Ok(())
     }
 } 

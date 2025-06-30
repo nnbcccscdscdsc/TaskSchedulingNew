@@ -1,8 +1,8 @@
 // task_splitter.rs
 // 任务拆分器，负责将MOE任务按专家、层、批次等策略拆分为多个子任务。
+use crate::config::ModelInfo;
 use crate::error::{Error, Result};
-use crate::task::{MoeTask, TaskPriority};
-use crate::model_downloader::ModelInfo;
+use crate::task::{MoeTask, TaskPriority, TaskStatus};
 use crate::types::*;
 use crate::data_preparator::DataPreparator;
 use crate::result_merger::ResultMerger;
@@ -92,7 +92,7 @@ impl TaskSplitter {
                 status: crate::task::TaskStatus::Pending,
                 result: None,
                 priority,
-                gpu_id: Some(0), // 默认GPU
+                stream_id: Some(expert_id),
                 parent_task_id: Some(parent_task_id.to_string()),
             };
             
@@ -119,7 +119,7 @@ impl TaskSplitter {
                 status: crate::task::TaskStatus::Pending,
                 result: None,
                 priority,
-                gpu_id: Some(0), // 默认GPU
+                stream_id: Some(layer_id),
                 parent_task_id: Some(parent_task_id.to_string()),
             };
             
@@ -157,7 +157,7 @@ impl TaskSplitter {
                 status: crate::task::TaskStatus::Pending,
                 result: None,
                 priority,
-                gpu_id: Some(0), // 默认GPU
+                stream_id: Some(batch_id),
                 parent_task_id: Some(parent_task_id.to_string()),
             };
             
@@ -194,7 +194,7 @@ impl TaskSplitter {
                         status: crate::task::TaskStatus::Pending,
                         result: None,
                         priority,
-                        gpu_id: Some(0), // 默认GPU
+                        stream_id: Some(layer_id * self.model_info.num_experts + expert_id),
                         parent_task_id: Some(parent_task_id.to_string()),
                     };
                     
@@ -417,7 +417,7 @@ mod tests {
             status: crate::task::TaskStatus::Pending,
             result: None,
             priority: TaskPriority::Normal,
-            gpu_id: Some(0),
+            stream_id: Some(0),
             parent_task_id: Some("parent".to_string()),
         };
         

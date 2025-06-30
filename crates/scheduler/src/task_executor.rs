@@ -1,74 +1,57 @@
 // task_executor.rs
-// 任务执行器，负责MOE任务的执行、重试、超时等处理。
-use crate::model_downloader::ModelInfo;
+// 任务执行器，负责实际执行单个MoE子任务，例如调用CUDA核函数进行专家计算。
 use crate::error::{Error, Result};
-use crate::task::{MoeTask, TaskStatus, TaskPriority};
+use crate::task::MoeTask;
+use rustacuda::prelude::*;
+use rustacuda::memory::{DeviceBuffer, CopyDestination};
+use std::error::Error as StdError;
 
+/// 任务执行器，管理CUDA上下文和设备
 pub struct TaskExecutor {
-    pub model_info: ModelInfo,
-    pub timeout_ms: u64,
-    pub max_retries: u32,
+    // 这个 context 必须存在，以确保 CUDA API 的调用在此上下文中执行。
+    // 我们用 _ 开头是因为我们不会直接使用它，但需要它来管理生命周期。
+    _context: Context,
 }
 
 impl TaskExecutor {
-    pub fn new(model_info: ModelInfo) -> Self {
-        Self {
-            model_info,
-            timeout_ms: 30000,
-            max_retries: 3,
-        }
+    /// 创建一个新的 TaskExecutor
+    ///
+    /// 这会初始化 Rustacuda 并设置当前的 CUDA 上下文。
+    pub fn new(device_id: usize) -> Result<Self> {
+        // 初始化CUDA驱动API
+        rustacuda::init(CudaFlags::empty())
+            .map_err(Error::CudaError)?;
+
+        // 获取指定ID的设备
+        let device = Device::get_device(device_id as u32)
+            .map_err(Error::CudaError)?;
+
+        // 为该设备创建上下文
+        let context = Context::create_and_push(ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, device)
+            .map_err(Error::CudaError)?;
+
+        Ok(Self { _context: context })
     }
 
-    pub fn set_timeout(&mut self, timeout_ms: u64) {
-        self.timeout_ms = timeout_ms;
-    }
+    /// 执行一个任务，将数据拷贝到GPU再拷贝回来
+    ///
+    /// 这是真实计算的第一步，用于验证数据通路。
+    pub fn execute_task(&self, task: &MoeTask) -> Result<Vec<u8>> {
+        println!("  [Executor] 开始执行任务: {}", task.task_id);
 
-    pub fn set_max_retries(&mut self, max_retries: u32) {
-        self.max_retries = max_retries;
-    }
+        // 1. 将输入数据的切片从CPU内存拷贝到GPU设备内存
+        let mut device_buffer = DeviceBuffer::from_slice(&task.input_data)
+            .map_err(|e| Error::CudaError(e))?;
+        println!("  [Executor] 已将 {} 字节数据拷贝到 GPU。", task.input_data.len());
+        
+        // --- 此处未来将插入真实的CUDA核函数调用 ---
+        
+        // 2. 将结果从GPU设备内存拷贝回CPU内存
+        let mut host_result = vec![0u8; task.input_data.len()];
+        device_buffer.copy_to(&mut host_result)
+            .map_err(|e| Error::CudaError(e))?;
+        println!("  [Executor] 已将 {} 字节结果传回 CPU。", host_result.len());
 
-    pub fn execute_task(&self, task: &mut MoeTask) -> Result<()> {
-        let start_time = std::time::Instant::now();
-        task.status = TaskStatus::Running;
-        let mut retry_count = 0;
-        loop {
-            match self.execute_single_task(task) {
-                Ok(()) => {
-                    task.status = TaskStatus::Completed;
-                    return Ok(());
-                }
-                Err(e) => {
-                    retry_count += 1;
-                    if retry_count >= self.max_retries {
-                        task.status = TaskStatus::Failed(e.to_string());
-                        return Err(e);
-                    }
-                    if start_time.elapsed().as_millis() > self.timeout_ms as u128 {
-                        task.status = TaskStatus::Failed("任务超时".to_string());
-                        return Err(Error::InferenceError("任务执行超时".to_string()));
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis((100 * retry_count).into()));
-                }
-            }
-        }
-    }
-
-    fn execute_single_task(&self, task: &mut MoeTask) -> Result<()> {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let result = self.generate_mock_result(task)?;
-        task.result = Some(result);
-        Ok(())
-    }
-
-    fn generate_mock_result(&self, task: &MoeTask) -> Result<Vec<u8>> {
-        let output_size = self.model_info.hidden_size * 4;
-        let mut result = Vec::new();
-        result.extend_from_slice(&(0u32).to_le_bytes());
-        result.extend_from_slice(&(0u32).to_le_bytes());
-        for i in 0..(output_size - 8) / 4 {
-            let value = (i % 100) as f32 / 100.0;
-            result.extend_from_slice(&value.to_le_bytes());
-        }
-        Ok(result)
+        Ok(host_result)
     }
 } 

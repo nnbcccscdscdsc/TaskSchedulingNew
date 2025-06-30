@@ -7,15 +7,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_dir = "downloads/google/switch-base-8";
     println!("从 {} 加载模型信息...", model_dir);
 
-    // 假设 model_downloader 能够从本地路径获取信息
-    // 注意：这需要 ModelDownloader 有一个相应的功能，我们暂时手动构建 ModelInfo
-    let model_info = ModelInfo {
-        model_type: "switch_transformer".to_string(),
-        num_experts: 8,
-        hidden_size: 512,
-        intermediate_size: 2048,
-        num_layers: 12,
-    };
+    // 使用 ModelDownloader 从本地路径动态获取模型信息
+    let downloader = ModelDownloader::new("downloads".to_string());
+    let model_info = downloader.get_model_info(model_dir)?;
+    
     println!("模型信息加载成功: {:#?}", model_info);
 
 
@@ -49,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  任务 ID: {}", task.task_id);
                 println!("  父任务 ID: {:?}", task.parent_task_id);
                 println!("  输入数据大小: {} 字节", task.input_data.len());
-                println!("  分配的 GPU ID: {:?}", task.gpu_id);
+                println!("  分配的流 ID: {:?}", task.stream_id);
                 println!("  状态: {:?}", task.status);
             }
         }
