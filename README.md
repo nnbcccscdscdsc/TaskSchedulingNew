@@ -9,7 +9,7 @@
 
 ## 目录结构
 - crates/scheduler/src/
-  - task_splitter.rs      // 任务拆分器
+  - task_splitter.rs      // 任务拆分器 支持多种拆分策略（按专家、按层、按批次或混合策略）, 生成带有依赖关系的子任务
   - data_preparator.rs    // 数据准备器
   - result_merger.rs      // 结果合并器
   - task_executor.rs      // 任务执行器
