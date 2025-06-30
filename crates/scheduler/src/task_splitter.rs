@@ -30,32 +30,9 @@ pub enum SplitStrategy {
     Hybrid { expert_split: bool, layer_split: bool, batch_size: usize },
 }
 
-/// 专家到GPU的映射信息
-/// 用于将专家分配到不同的GPU上，以实现负载均衡。
-/// 专家ID：用于标识专家的唯一ID。
-/// GPU ID：用于标识GPU的唯一ID。
-/// 内存需求：用于标识专家所需的内存大小。
-#[derive(Debug, Clone)]
-pub struct ExpertGpuMapping {
-    pub expert_id: usize,
-    pub gpu_id: i32,
-    pub memory_required: u64, // MB
-}
-
-/// 门控权重信息
-/// 门控权重用于控制专家的输出，以实现负载均衡。
-/// 权重：用于标识专家的权重。
-/// top_k：用于标识门控权重的前k个专家。
-#[derive(Debug, Clone)]
-pub struct GateWeights {
-    pub weights: Vec<f32>,
-    pub top_k: usize,
-}
-
 /// 任务拆分器，负责将MOE模型推理任务拆分为多个子任务
 /// 模型信息：用于标识模型类型、专家数量、隐藏层大小、中间层大小、层数等。
 /// 拆分策略：用于标识拆分策略，如按专家、按层、按批次、混合策略等。
-/// 专家到GPU的映射：用于将专家分配到不同的GPU上，以实现负载均衡。
 /// 数据准备器：用于准备数据，如专家数据、层数据、批次数据等。
 /// 结果合并器：用于合并结果，如专家结果、层结果、批次结果等。
 pub struct TaskSplitter {
@@ -63,8 +40,6 @@ pub struct TaskSplitter {
     pub model_info: ModelInfo,
     /// 拆分策略
     pub strategy: SplitStrategy,
-    /// 专家到GPU的映射（线程安全）
-    pub expert_gpu_mapping: Arc<RwLock<HashMap<usize, ExpertGpuMapping>>>,
     /// 数据准备器
     pub data_preparator: Arc<DataPreparator>,
     /// 结果合并器
@@ -81,23 +56,9 @@ impl TaskSplitter {
         Self {
             model_info,
             strategy,
-            expert_gpu_mapping: Arc::new(RwLock::new(HashMap::new())),
             data_preparator,
             result_merger,
         }
-    }
-
-    /// 设置专家到GPU的映射
-    pub fn set_expert_gpu_mapping(&self, mapping: Vec<ExpertGpuMapping>) -> Result<()> {
-        let mut map = self.expert_gpu_mapping.write()
-            .map_err(|e| Error::Other(format!("无法获取专家GPU映射锁: {}", e)))?;
-        
-        map.clear();
-        for expert_mapping in mapping {
-            map.insert(expert_mapping.expert_id, expert_mapping);
-        }
-        
-        Ok(())
     }
 
     /// 拆分MOE任务
@@ -118,8 +79,6 @@ impl TaskSplitter {
     /// 按专家拆分任务
     fn split_by_expert(&self, input_data: &[u8], parent_task_id: &str, priority: TaskPriority) -> Result<Vec<MoeTask>> {
         let mut tasks = Vec::new();
-        let expert_gpu_map = self.expert_gpu_mapping.read()
-            .map_err(|e| Error::Other(format!("无法读取专家GPU映射: {}", e)))?;
         
         for expert_id in 0..self.model_info.num_experts {
             let task_id = self.generate_task_id(parent_task_id, "expert", expert_id);
@@ -127,18 +86,13 @@ impl TaskSplitter {
             // 为每个专家创建专门的任务数据
             let expert_data = self.data_preparator.prepare_expert_data(input_data, expert_id)?;
             
-            // 获取GPU分配信息
-            let gpu_id = expert_gpu_map.get(&expert_id)
-                .map(|m| m.gpu_id)
-                .unwrap_or(0);
-            
             let task = MoeTask {
                 task_id,
                 input_data: expert_data,
                 status: crate::task::TaskStatus::Pending,
                 result: None,
                 priority,
-                gpu_id: Some(gpu_id),
+                gpu_id: Some(0), // 默认GPU
                 parent_task_id: Some(parent_task_id.to_string()),
             };
             
@@ -390,7 +344,7 @@ mod tests {
         let strategy = SplitStrategy::ByExpert;
         let splitter = TaskSplitter::new(model_info, strategy);
         
-        assert_eq!(splitter.expert_gpu_mapping.read().unwrap().len(), 0);
+        assert_eq!(splitter.data_preparator.read().unwrap().len(), 0);
     }
 
     #[test]

@@ -35,6 +35,12 @@ impl From<rustacuda::error::CudaError> for Error {
     }
 }
 
+impl From<serde_json::Error> for Error {
+    fn from(e: serde_json::Error) -> Self {
+        Error::Other(format!("JSON error: {}", e))
+    }
+}
+
 impl From<std::ffi::NulError> for Error {
     fn from(e: std::ffi::NulError) -> Self {
         Error::Other(format!("NulError: {}", e))

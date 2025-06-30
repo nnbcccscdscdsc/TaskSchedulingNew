@@ -3,8 +3,8 @@
 /target/
 **/*.rs.bk  # Rust 备份文件
 
-# 构建缓存和日志
-Cargo.lock  # 如果多人协作，可以考虑保留；如果是库项目，可以忽略
+# 对于应用类项目，建议提交 Cargo.lock 文件以保证可复现构建。
+# 因此，我们不再忽略它。
 
 # --- Python 相关 ---
 # 虚拟环境
@@ -30,5 +30,5 @@ Thumbs.db  # Windows
 *.swp      # Vim 临时文件
 
 # --- 其他 ---
-# 本地测试文件（如临时下载的数据）
-/examples/downloads/  # 假设你的 examples 下有下载目录
+# 下载的模型文件
+/downloads/

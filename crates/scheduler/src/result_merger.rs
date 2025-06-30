@@ -67,27 +67,22 @@ impl ResultMerger {
         if results.is_empty() {
             return Err(Error::InferenceError("没有层结果可合并".to_string()));
         }
-        if results.len() != self.model_info.num_layers {
-            return Err(Error::InferenceError(format!("层结果数量 {} 与层数 {} 不匹配", results.len(), self.model_info.num_layers)));
-        }
-        let mut merged_result = Vec::new();
-        for (layer_id, result) in results.iter().enumerate() {
-            if layer_id == 0 {
-                merged_result = result.clone();
+        let mut merged_result = vec![0u8; results[0].len()];
+        let mut is_first = true;
+
+        for result in results {
+            if is_first {
+                merged_result.copy_from_slice(result);
+                is_first = false;
             } else {
                 if merged_result.len() != result.len() {
-                    return Err(Error::InferenceError(format!("层 {} 的输出大小 {} 与前一层的残差大小 {} 不匹配", layer_id, result.len(), merged_result.len())));
+                    return Err(Error::InferenceError("层输出大小与残差大小不匹配".to_string()));
                 }
-                for (i, (residual, current)) in merged_result.chunks_exact(4).zip(result.chunks_exact(4)).enumerate() {
-                    if let (Ok(residual_bytes), Ok(current_bytes)) = (residual.try_into(), current.try_into()) {
-                        let residual_val = f32::from_le_bytes(residual_bytes);
-                        let current_val = f32::from_le_bytes(current_bytes);
-                        let sum = residual_val + current_val;
-                        let start_idx = i * 4;
-                        if start_idx + 4 <= merged_result.len() {
-                            merged_result[start_idx..start_idx + 4].copy_from_slice(&sum.to_le_bytes());
-                        }
-                    }
+                for (merged_chunk, result_chunk) in merged_result.chunks_exact_mut(4).zip(result.chunks_exact(4)) {
+                    let residual_val = f32::from_le_bytes(merged_chunk.try_into().unwrap());
+                    let current_val = f32::from_le_bytes(result_chunk.try_into().unwrap());
+                    let sum = residual_val + current_val;
+                    merged_chunk.copy_from_slice(&sum.to_le_bytes());
                 }
             }
         }

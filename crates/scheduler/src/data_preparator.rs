@@ -70,7 +70,7 @@ impl DataPreparator {
     fn generate_gate_info(&self, expert_id: usize) -> Result<Vec<u8>> {
         let mut gate_info = Vec::new();
         for i in 0..self.model_info.num_experts {
-            let weight = if i == expert_id { 1.0 } else { 0.0 };
+            let weight: f32 = if i == expert_id { 1.0 } else { 0.0 };
             gate_info.extend_from_slice(&weight.to_le_bytes());
         }
         Ok(gate_info)

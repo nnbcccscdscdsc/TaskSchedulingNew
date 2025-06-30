@@ -47,7 +47,7 @@ impl TaskExecutor {
                         task.status = TaskStatus::Failed("任务超时".to_string());
                         return Err(Error::InferenceError("任务执行超时".to_string()));
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(100 * retry_count));
+                    std::thread::sleep(std::time::Duration::from_millis((100 * retry_count).into()));
                 }
             }
         }

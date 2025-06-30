@@ -40,8 +40,15 @@ impl ModelDownloader {
         let script_path = format!("{}/download_model.py", model_dir);
         fs::write(&script_path, python_script)?;
         
+        // 确定Python解释器路径，优先使用虚拟环境
+        let python_executable = if Path::new("venv/bin/python3").exists() {
+            "venv/bin/python3"
+        } else {
+            "python3"
+        };
+
         // 执行下载脚本
-        let output = Command::new("python3")
+        let output = Command::new(python_executable)
             .arg(&script_path)
             .output()
             .map_err(|e| Error::Other(format!("执行Python脚本失败: {}", e)))?;
@@ -106,7 +113,7 @@ def download_model(model_name, save_dir):
         print(f"专家数量: {{getattr(config, 'num_experts', 'N/A')}}")
         
     except Exception as e:
-        print(f"下载失败: {{e}}")
+        print(f"下载失败: {{e}}", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
