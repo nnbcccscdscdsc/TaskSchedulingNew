@@ -1,3 +1,5 @@
+// task_splitter.rs
+// 任务拆分器，负责将MOE任务按专家、层、批次等策略拆分为多个子任务。
 use crate::error::{Error, Result};
 use crate::task::{MoeTask, TaskPriority};
 use crate::model_downloader::ModelInfo;

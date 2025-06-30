@@ -1,3 +1,5 @@
+// types.rs
+// 定义通用类型，如专家到GPU的映射、门控权重、常量等辅助类型。
 use serde::{Deserialize, Serialize};
 
 /// 专家到GPU的映射信息

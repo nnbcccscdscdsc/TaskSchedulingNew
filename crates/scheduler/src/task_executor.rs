@@ -1,3 +1,5 @@
+// task_executor.rs
+// 任务执行器，负责MOE任务的执行、重试、超时等处理。
 use crate::model_downloader::ModelInfo;
 use crate::error::{Error, Result};
 use crate::task::{MoeTask, TaskStatus, TaskPriority};

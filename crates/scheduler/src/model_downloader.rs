@@ -1,3 +1,5 @@
+// model_downloader.rs
+// 模型下载器，支持从Hugging Face等平台下载Switch Transformer模型及其配置信息。
 use crate::error::{Error, Result};
 use std::path::Path;
 use std::fs;

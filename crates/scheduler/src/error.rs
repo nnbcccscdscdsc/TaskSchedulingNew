@@ -1,3 +1,5 @@
+// error.rs
+// 定义项目通用的错误类型（如IO、CUDA、模型加载、推理等）和Result类型。
 use std::fmt;
 use std::io;
 

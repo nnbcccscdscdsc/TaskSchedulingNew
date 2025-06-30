@@ -1,3 +1,5 @@
+// data_preparator.rs
+// 数据准备器，负责为专家、层等准备输入数据，包含数据格式转换和辅助信息生成。
 use crate::model_downloader::ModelInfo;
 use crate::error::{Error, Result};
 use crate::types::*;

@@ -1,3 +1,5 @@
+// result_merger.rs
+// 结果合并器，负责合并各子任务（如专家、层、批次等）的推理结果。
 use crate::model_downloader::ModelInfo;
 use crate::error::{Error, Result};
 use crate::types::*;

@@ -1,3 +1,5 @@
+// config.rs
+// 调度器全局配置结构体及其默认实现，包含最大并发任务数、批处理大小和可用GPU列表。
 use serde::{Deserialize, Serialize};
 
 /// 调度器全局配置，控制任务并发、批大小和可用GPU

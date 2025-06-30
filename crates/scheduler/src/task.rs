@@ -1,3 +1,5 @@
+// task.rs
+// 定义MOE任务结构体、任务状态枚举、任务优先级等。
 use serde::{Deserialize, Serialize};
 
 /// 任务状态枚举，描述任务的生命周期
