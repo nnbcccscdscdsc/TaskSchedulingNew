@@ -4,16 +4,20 @@ use crate::model_downloader::ModelInfo;
 use crate::error::{Error, Result};
 use crate::types::*;
 use crate::task_splitter::SplitStrategy;
-
+ 
+/// 结果合并器，负责合并各子任务（如专家、层、批次等）的推理结果。
 pub struct ResultMerger {
     pub model_info: ModelInfo,
 }
 
+/// 结果合并器实现
 impl ResultMerger {
+    // 创建结果合并器
     pub fn new(model_info: ModelInfo) -> Self {
         Self { model_info }
     }
 
+    // 合并结果
     pub fn merge_results(&self, results: &[Vec<u8>], gate_weights: Option<GateWeights>, strategy: &SplitStrategy) -> Result<Vec<u8>> {
         match strategy {
             SplitStrategy::ByExpert => self.merge_expert_results(results, gate_weights),
@@ -23,6 +27,7 @@ impl ResultMerger {
         }
     }
 
+    // 合并专家结果 加权求和
     fn merge_expert_results(&self, results: &[Vec<u8>], gate_weights: Option<GateWeights>) -> Result<Vec<u8>> {
         if results.is_empty() {
             return Err(Error::InferenceError("没有专家结果可合并".to_string()));
@@ -57,6 +62,7 @@ impl ResultMerger {
         Ok(final_result)
     }
 
+    // 合并层结果 残差相加
     fn merge_layer_results(&self, results: &[Vec<u8>]) -> Result<Vec<u8>> {
         if results.is_empty() {
             return Err(Error::InferenceError("没有层结果可合并".to_string()));
@@ -88,6 +94,7 @@ impl ResultMerger {
         Ok(merged_result)
     }
 
+    // 合并批次结果 直接拼接
     fn merge_batch_results(&self, results: &[Vec<u8>]) -> Result<Vec<u8>> {
         if results.is_empty() {
             return Err(Error::InferenceError("没有批次结果可合并".to_string()));
@@ -104,6 +111,7 @@ impl ResultMerger {
         Ok(merged_result)
     }
 
+    // 合并混合策略结果 先合并专家结果，再合并层结果
     fn merge_hybrid_results(&self, results: &[Vec<u8>], gate_weights: Option<GateWeights>) -> Result<Vec<u8>> {
         if results.is_empty() {
             return Err(Error::InferenceError("没有混合策略结果可合并".to_string()));
@@ -124,6 +132,7 @@ impl ResultMerger {
         self.merge_layer_results(&layer_results)
     }
 
+    // 移除填充
     fn remove_padding(&self, result: &[u8]) -> Result<Vec<u8>> {
         Ok(result.to_vec())
     }

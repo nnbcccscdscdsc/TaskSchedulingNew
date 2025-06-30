@@ -31,6 +31,10 @@ pub enum SplitStrategy {
 }
 
 /// 专家到GPU的映射信息
+/// 用于将专家分配到不同的GPU上，以实现负载均衡。
+/// 专家ID：用于标识专家的唯一ID。
+/// GPU ID：用于标识GPU的唯一ID。
+/// 内存需求：用于标识专家所需的内存大小。
 #[derive(Debug, Clone)]
 pub struct ExpertGpuMapping {
     pub expert_id: usize,
@@ -39,6 +43,9 @@ pub struct ExpertGpuMapping {
 }
 
 /// 门控权重信息
+/// 门控权重用于控制专家的输出，以实现负载均衡。
+/// 权重：用于标识专家的权重。
+/// top_k：用于标识门控权重的前k个专家。
 #[derive(Debug, Clone)]
 pub struct GateWeights {
     pub weights: Vec<f32>,
@@ -46,6 +53,11 @@ pub struct GateWeights {
 }
 
 /// 任务拆分器，负责将MOE模型推理任务拆分为多个子任务
+/// 模型信息：用于标识模型类型、专家数量、隐藏层大小、中间层大小、层数等。
+/// 拆分策略：用于标识拆分策略，如按专家、按层、按批次、混合策略等。
+/// 专家到GPU的映射：用于将专家分配到不同的GPU上，以实现负载均衡。
+/// 数据准备器：用于准备数据，如专家数据、层数据、批次数据等。
+/// 结果合并器：用于合并结果，如专家结果、层结果、批次结果等。
 pub struct TaskSplitter {
     /// 模型信息
     pub model_info: ModelInfo,
@@ -59,6 +71,7 @@ pub struct TaskSplitter {
     pub result_merger: Arc<ResultMerger>,
 }
 
+/// 任务拆分器实现
 impl TaskSplitter {
     /// 创建新的任务拆分器
     pub fn new(model_info: ModelInfo, strategy: SplitStrategy) -> Self {
