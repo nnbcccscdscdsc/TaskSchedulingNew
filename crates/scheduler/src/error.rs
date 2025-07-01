@@ -18,6 +18,8 @@ pub enum Error {
     GpuError(String),
     /// 其他类型错误
     Other(String),
+    /// 配置错误
+    ConfigError(String),
 }
 
 /// 通用结果类型
@@ -56,6 +58,7 @@ impl fmt::Display for Error {
             Error::InferenceError(msg) => write!(f, "推理错误: {}", msg),
             Error::GpuError(msg) => write!(f, "GPU错误: {}", msg),
             Error::Other(msg) => write!(f, "其他错误: {}", msg),
+            Error::ConfigError(msg) => write!(f, "配置错误: {}", msg),
         }
     }
 }

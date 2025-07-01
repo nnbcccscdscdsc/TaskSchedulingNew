@@ -4,7 +4,6 @@ pub mod config;
 pub mod data_preparator;
 pub mod error;
 pub mod model_downloader;
-pub mod model_def;
 pub mod result_merger;
 pub mod scheduler;
 pub mod task;

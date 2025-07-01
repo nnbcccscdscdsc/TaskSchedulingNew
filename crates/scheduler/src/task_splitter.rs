@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
+use std::path::Path;
+use std::fs::File;
+use crate::config::ModelConfigJson;
+use std::io::Read;
 
 // 常量定义，避免硬编码
 const EXPERT_ID_SIZE: usize = 4;
@@ -59,6 +63,29 @@ impl TaskSplitter {
             data_preparator,
             result_merger,
         }
+    }
+
+    /// 从模型目录自动读取 config.json 并初始化 ModelInfo
+    /// 如果 config.json 不存在则返回错误
+    pub fn new_from_model_dir(model_dir: &str, strategy: SplitStrategy) -> Result<Self> {
+        // 拼接 config.json 路径
+        let config_path = Path::new(model_dir).join("config.json");
+        if !config_path.exists() {
+            return Err(Error::ConfigError(format!("模型目录 {} 下未找到 config.json", model_dir)));
+        }
+        // 读取 config.json 文件
+        let mut file = File::open(&config_path)
+            .map_err(|e| Error::ConfigError(format!("打开 config.json 失败: {}", e)))?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .map_err(|e| Error::ConfigError(format!("读取 config.json 失败: {}", e)))?;
+        // 解析 json
+        let config_json: ModelConfigJson = serde_json::from_str(&contents)
+            .map_err(|e| Error::ConfigError(format!("解析 config.json 失败: {}", e)))?;
+        // 转换为 ModelInfo
+        let model_info = ModelInfo::from(config_json);
+        // 调用原有构造方法
+        Ok(Self::new(model_info, strategy))
     }
 
     /// 拆分MOE任务
