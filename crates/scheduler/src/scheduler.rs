@@ -1,6 +1,6 @@
 // scheduler.rs
 // 任务调度器，支持任务队列的提交、获取等基本调度操作。
-use crate::task::{MoeTask, TaskStatus};
+use crate::task::MoeTask;
 use crate::config::SchedulerConfig;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};

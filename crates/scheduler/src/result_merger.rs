@@ -36,10 +36,8 @@ impl ResultMerger {
             },
             SplitStrategy::ByLayer => self.merge_layer_results(results),
             SplitStrategy::ByBatch { .. } => self.merge_batch_results(results),
-            SplitStrategy::Hybrid { .. } => self.merge_hybrid_results(results, gate_weights),
-            _ => {
-                // 对于其他策略，暂时使用简单的拼接
-                self.concatenate_results(results)
+            SplitStrategy::Hybrid { expert_split, layer_split, expert_ratio, layer_ratio, .. } => {
+                self.merge_hybrid_results(results, gate_weights, *expert_split, *layer_split, *expert_ratio, *layer_ratio)
             }
         }
     }
@@ -49,41 +47,49 @@ impl ResultMerger {
         Ok(results.concat())
     }
 
-    // 合并专家结果 加权求和
+    /// 合并专家结果
     fn merge_expert_results(&self, results: &[Vec<u8>], gate_weights: GateWeights) -> Result<Vec<u8>> {
         if results.is_empty() {
             return Err(Error::InferenceError("没有专家结果可合并".to_string()));
         }
-        if results.len() != self.model_info.num_experts {
-            return Err(Error::InferenceError(format!("专家结果数量 {} 与专家数量 {} 不匹配", results.len(), self.model_info.num_experts)));
+        
+        if results.len() != gate_weights.weights.len() {
+            return Err(Error::InferenceError(format!(
+                "专家结果数量 {} 与门控权重数量 {} 不匹配", 
+                results.len(), 
+                gate_weights.weights.len()
+            )));
         }
-        if gate_weights.weights.len() != self.model_info.num_experts {
-            return Err(Error::InferenceError(format!("门控权重数量 {} 与专家数量 {} 不匹配", gate_weights.weights.len(), self.model_info.num_experts)));
-        }
-        let expert_output_size = results[0].len();
-        let mut merged_result = vec![0.0f32; expert_output_size / 4];
-        for (expert_id, result) in results.iter().enumerate() {
-            if result.len() != expert_output_size {
-                return Err(Error::InferenceError(format!("专家 {} 的输出大小 {} 与其他专家不一致 {}", expert_id, result.len(), expert_output_size)));
+        
+        // 检查所有结果的大小是否一致
+        let result_size = results[0].len();
+        for (i, result) in results.iter().enumerate() {
+            if result.len() != result_size {
+                return Err(Error::InferenceError(format!(
+                    "专家 {} 的结果大小 {} 与其他专家不一致 {}", 
+                    i, result.len(), result_size
+                )));
             }
-            let weight = gate_weights.weights[expert_id];
-            for (i, chunk) in result.chunks_exact(4).enumerate() {
-                if i < merged_result.len() {
-                    if let Ok(bytes) = chunk.try_into() {
-                        let value = f32::from_le_bytes(bytes);
-                        merged_result[i] += weight * value;
-                    }
+        }
+        
+        // 按门控权重合并结果
+        let mut merged_result = vec![0u8; result_size];
+        
+        for (i, (result, weight)) in results.iter().zip(gate_weights.weights.iter()).enumerate() {
+            if *weight > 0.0 {
+                // 将结果按权重累加
+                for (merged_chunk, result_chunk) in merged_result.chunks_exact_mut(4).zip(result.chunks_exact(4)) {
+                    let current_val = f32::from_le_bytes(merged_chunk.try_into().unwrap());
+                    let expert_val = f32::from_le_bytes(result_chunk.try_into().unwrap());
+                    let weighted_sum = current_val + expert_val * weight;
+                    merged_chunk.copy_from_slice(&weighted_sum.to_le_bytes());
                 }
             }
         }
-        let mut final_result = Vec::new();
-        for &value in &merged_result {
-            final_result.extend_from_slice(&value.to_le_bytes());
-        }
-        Ok(final_result)
+        
+        Ok(merged_result)
     }
 
-    // 合并层结果 残差相加
     fn merge_layer_results(&self, results: &[Vec<u8>]) -> Result<Vec<u8>> {
         if results.is_empty() {
             return Err(Error::InferenceError("没有层结果可合并".to_string()));
@@ -127,25 +133,97 @@ impl ResultMerger {
         Ok(merged_result)
     }
 
-    // 合并混合策略结果 先合并专家结果，再合并层结果
-    fn merge_hybrid_results(&self, results: &[Vec<u8>], gate_weights: Option<GateWeights>) -> Result<Vec<u8>> {
+    // 合并混合策略结果
+    fn merge_hybrid_results(
+        &self, 
+        results: &[Vec<u8>], 
+        gate_weights: Option<GateWeights>,
+        expert_split: bool,
+        layer_split: bool,
+        expert_ratio: f32,
+        layer_ratio: f32,
+    ) -> Result<Vec<u8>> {
         if results.is_empty() {
             return Err(Error::InferenceError("没有混合策略结果可合并".to_string()));
         }
-        let num_layers = self.model_info.num_layers;
-        let num_experts = self.model_info.num_experts;
-        if results.len() != num_layers * num_experts {
-            return Err(Error::InferenceError(format!("混合策略结果数量 {} 与期望数量 {} 不匹配", results.len(), num_layers * num_experts)));
+
+        if expert_split && layer_split {
+            // 先按层合并专家结果，再合并层结果
+            let num_experts_to_use = (self.model_info.num_experts as f32 * expert_ratio).round() as usize;
+            let num_layers_to_use = (self.model_info.num_layers as f32 * layer_ratio).round() as usize;
+            
+            if results.len() != num_layers_to_use * num_experts_to_use {
+                return Err(Error::InferenceError(format!(
+                    "混合策略结果数量 {} 与期望数量 {} 不匹配", 
+                    results.len(), 
+                    num_layers_to_use * num_experts_to_use
+                )));
+            }
+
+            let mut layer_results = Vec::new();
+            for layer_id in 0..num_layers_to_use {
+                let layer_start = layer_id * num_experts_to_use;
+                let layer_end = layer_start + num_experts_to_use;
+                let layer_expert_results = &results[layer_start..layer_end];
+                
+                // 为每层创建门控权重
+                let layer_gate_weights = if let Some(ref weights) = gate_weights {
+                    GateWeights {
+                        weights: weights.weights.iter().take(num_experts_to_use).cloned().collect(),
+                        top_k: std::cmp::min(weights.top_k, num_experts_to_use),
+                    }
+                } else {
+                    // 如果没有门控权重，使用均匀权重
+                    GateWeights {
+                        weights: vec![1.0 / num_experts_to_use as f32; num_experts_to_use],
+                        top_k: num_experts_to_use,
+                    }
+                };
+                
+                let layer_result = self.merge_expert_results(layer_expert_results, layer_gate_weights)?;
+                layer_results.push(layer_result);
+            }
+            self.merge_layer_results(&layer_results)
+        } else if expert_split {
+            // 只按专家拆分
+            let num_experts_to_use = (self.model_info.num_experts as f32 * expert_ratio).round() as usize;
+            if results.len() != num_experts_to_use {
+                return Err(Error::InferenceError(format!(
+                    "专家拆分结果数量 {} 与期望数量 {} 不匹配", 
+                    results.len(), 
+                    num_experts_to_use
+                )));
+            }
+            
+            let expert_gate_weights = if let Some(ref weights) = gate_weights {
+                GateWeights {
+                    weights: weights.weights.iter().take(num_experts_to_use).cloned().collect(),
+                    top_k: std::cmp::min(weights.top_k, num_experts_to_use),
+                }
+            } else {
+                GateWeights {
+                    weights: vec![1.0 / num_experts_to_use as f32; num_experts_to_use],
+                    top_k: num_experts_to_use,
+                }
+            };
+            
+            self.merge_expert_results(results, expert_gate_weights)
+        } else if layer_split {
+            // 只按层拆分
+            let num_layers_to_use = (self.model_info.num_layers as f32 * layer_ratio).round() as usize;
+            if results.len() != num_layers_to_use {
+                return Err(Error::InferenceError(format!(
+                    "层拆分结果数量 {} 与期望数量 {} 不匹配", 
+                    results.len(), 
+                    num_layers_to_use
+                )));
+            }
+            
+            self.merge_layer_results(results)
+        } else {
+            // 只按批次拆分
+            self.merge_batch_results(results)
         }
-        let mut layer_results = Vec::new();
-        for layer_id in 0..num_layers {
-            let layer_start = layer_id * num_experts;
-            let layer_end = layer_start + num_experts;
-            let layer_expert_results = &results[layer_start..layer_end];
-            let layer_result = self.merge_expert_results(layer_expert_results, gate_weights.clone().unwrap())?;
-            layer_results.push(layer_result);
-        }
-        self.merge_layer_results(&layer_results)
     }
 
     // 移除填充

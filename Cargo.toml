@@ -26,3 +26,15 @@ path = "crates/scheduler/examples/download_and_split_example.rs"
 [[example]]
 name = "verify_split_logic"
 path = "crates/scheduler/examples/verify_split_logic.rs"
+
+[[example]]
+name = "split_task_test"
+path = "crates/scheduler/examples/split_task_test.rs"
+
+[[example]]
+name = "download_model"
+path = "crates/scheduler/examples/download_model.rs"
+
+[[example]]
+name = "comprehensive_test"
+path = "crates/scheduler/examples/comprehensive_test.rs"

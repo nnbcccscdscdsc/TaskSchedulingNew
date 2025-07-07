@@ -6,11 +6,9 @@ use crate::task::{MoeTask, TaskPriority, TaskStatus};
 use crate::types::*;
 use crate::data_preparator::DataPreparator;
 use crate::result_merger::ResultMerger;
-use crate::task_executor::TaskExecutor;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use uuid::Uuid;
+use std::sync::Arc;
 use std::path::Path;
 use std::fs::File;
 use crate::config::ModelConfigJson;
@@ -31,7 +29,80 @@ pub enum SplitStrategy {
     /// 按批次拆分：将输入分批处理
     ByBatch { batch_size: usize },
     /// 混合策略：结合多种拆分方式
-    Hybrid { expert_split: bool, layer_split: bool, batch_size: usize },
+    Hybrid { 
+        expert_split: bool, 
+        layer_split: bool, 
+        batch_size: usize,
+        expert_ratio: f32, // 专家拆分比例 (0.0-1.0)
+        layer_ratio: f32,  // 层拆分比例 (0.0-1.0)
+    },
+}
+
+impl SplitStrategy {
+    /// 验证策略参数的有效性
+    pub fn validate(&self, model_info: &ModelInfo) -> Result<()> {
+        match self {
+            SplitStrategy::ByExpert => {
+                if model_info.num_experts == 0 {
+                    return Err(Error::InferenceError("专家数量不能为0".to_string()));
+                }
+            }
+            SplitStrategy::ByLayer => {
+                if model_info.num_layers == 0 {
+                    return Err(Error::InferenceError("层数不能为0".to_string()));
+                }
+            }
+            SplitStrategy::ByBatch { batch_size } => {
+                if *batch_size == 0 {
+                    return Err(Error::InferenceError("批次大小不能为0".to_string()));
+                }
+                if *batch_size > model_info.hidden_size * 4 {
+                    return Err(Error::InferenceError("批次大小过大，可能导致内存溢出".to_string()));
+                }
+            }
+            SplitStrategy::Hybrid { expert_split, layer_split, batch_size, expert_ratio, layer_ratio } => {
+                if !expert_split && !layer_split {
+                    return Err(Error::InferenceError("混合策略至少需要启用一种拆分方式".to_string()));
+                }
+                if *batch_size == 0 {
+                    return Err(Error::InferenceError("批次大小不能为0".to_string()));
+                }
+                if *expert_ratio < 0.0 || *expert_ratio > 1.0 {
+                    return Err(Error::InferenceError("专家拆分比例必须在0.0-1.0之间".to_string()));
+                }
+                if *layer_ratio < 0.0 || *layer_ratio > 1.0 {
+                    return Err(Error::InferenceError("层拆分比例必须在0.0-1.0之间".to_string()));
+                }
+                if *expert_split && model_info.num_experts == 0 {
+                    return Err(Error::InferenceError("专家数量不能为0".to_string()));
+                }
+                if *layer_split && model_info.num_layers == 0 {
+                    return Err(Error::InferenceError("层数不能为0".to_string()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 获取策略描述
+    pub fn description(&self) -> String {
+        match self {
+            SplitStrategy::ByExpert => "按专家拆分".to_string(),
+            SplitStrategy::ByLayer => "按层拆分".to_string(),
+            SplitStrategy::ByBatch { batch_size } => format!("按批次拆分 (批次大小: {})", batch_size),
+            SplitStrategy::Hybrid { expert_split, layer_split, batch_size, expert_ratio, layer_ratio } => {
+                let mut parts = Vec::new();
+                if *expert_split {
+                    parts.push(format!("专家拆分({:.1}%)", expert_ratio * 100.0));
+                }
+                if *layer_split {
+                    parts.push(format!("层拆分({:.1}%)", layer_ratio * 100.0));
+                }
+                parts.push(format!("批次大小: {}", batch_size));
+                format!("混合策略: {}", parts.join(", "))
+            }
+        }
+    }
 }
 
 /// 任务拆分器，负责将MOE模型推理任务拆分为多个子任务
@@ -53,16 +124,19 @@ pub struct TaskSplitter {
 /// 任务拆分器实现
 impl TaskSplitter {
     /// 创建新的任务拆分器
-    pub fn new(model_info: ModelInfo, strategy: SplitStrategy) -> Self {
+    pub fn new(model_info: ModelInfo, strategy: SplitStrategy) -> Result<Self> {
+        // 验证策略参数
+        strategy.validate(&model_info)?;
+        
         let data_preparator = Arc::new(DataPreparator::new(model_info.clone()));
         let result_merger = Arc::new(ResultMerger::new(model_info.clone()));
         
-        Self {
+        Ok(Self {
             model_info,
             strategy,
             data_preparator,
             result_merger,
-        }
+        })
     }
 
     /// 从模型目录自动读取 config.json 并初始化 ModelInfo
@@ -85,7 +159,7 @@ impl TaskSplitter {
         // 转换为 ModelInfo
         let model_info = ModelInfo::from(config_json);
         // 调用原有构造方法
-        Ok(Self::new(model_info, strategy))
+        Self::new(model_info, strategy)
     }
 
     /// 拆分MOE任务
@@ -97,8 +171,8 @@ impl TaskSplitter {
             SplitStrategy::ByExpert => self.split_by_expert(input_data, task_id, priority),
             SplitStrategy::ByLayer => self.split_by_layer(input_data, task_id, priority),
             SplitStrategy::ByBatch { batch_size } => self.split_by_batch(input_data, task_id, priority, *batch_size),
-            SplitStrategy::Hybrid { expert_split, layer_split, batch_size } => {
-                self.split_hybrid(input_data, task_id, priority, *expert_split, *layer_split, *batch_size)
+            SplitStrategy::Hybrid { expert_split, layer_split, batch_size, expert_ratio, layer_ratio } => {
+                self.split_hybrid(input_data, task_id, priority, *expert_split, *layer_split, *batch_size, *expert_ratio, *layer_ratio)
             }
         }
     }
@@ -203,14 +277,19 @@ impl TaskSplitter {
         priority: TaskPriority,
         expert_split: bool, 
         layer_split: bool, 
-        batch_size: usize
+        batch_size: usize,
+        expert_ratio: f32,
+        layer_ratio: f32,
     ) -> Result<Vec<MoeTask>> {
         let mut tasks = Vec::new();
         
         if expert_split && layer_split {
             // 先按层拆分，再按专家拆分
-            for layer_id in 0..self.model_info.num_layers {
-                for expert_id in 0..self.model_info.num_experts {
+            let num_experts_to_use = (self.model_info.num_experts as f32 * expert_ratio).round() as usize;
+            let num_layers_to_use = (self.model_info.num_layers as f32 * layer_ratio).round() as usize;
+            
+            for layer_id in 0..num_layers_to_use {
+                for expert_id in 0..num_experts_to_use {
                     let task_id = self.generate_task_id(parent_task_id, &format!("layer_{}_expert", layer_id), expert_id);
                     
                     let layer_expert_data = self.data_preparator.prepare_layer_expert_data(input_data, layer_id, expert_id)?;
@@ -221,7 +300,7 @@ impl TaskSplitter {
                         status: crate::task::TaskStatus::Pending,
                         result: None,
                         priority,
-                        stream_id: Some(layer_id * self.model_info.num_experts + expert_id),
+                        stream_id: Some(layer_id * num_experts_to_use + expert_id),
                         parent_task_id: Some(parent_task_id.to_string()),
                     };
                     
@@ -230,22 +309,28 @@ impl TaskSplitter {
             }
         } else if expert_split && batch_size > 0 {
             // 专家拆分 + 批次拆分
+            let num_experts_to_use = (self.model_info.num_experts as f32 * expert_ratio).round() as usize;
             let expert_tasks = self.split_by_expert(input_data, parent_task_id, priority)?;
-            for expert_task in expert_tasks {
+            for expert_task in expert_tasks.iter().take(num_experts_to_use) {
                 let batch_tasks = self.split_by_batch(&expert_task.input_data, &expert_task.task_id, priority, batch_size)?;
                 tasks.extend(batch_tasks);
             }
         } else if layer_split && batch_size > 0 {
             // 层拆分 + 批次拆分
+            let num_layers_to_use = (self.model_info.num_layers as f32 * layer_ratio).round() as usize;
             let layer_tasks = self.split_by_layer(input_data, parent_task_id, priority)?;
-            for layer_task in layer_tasks {
+            for layer_task in layer_tasks.iter().take(num_layers_to_use) {
                 let batch_tasks = self.split_by_batch(&layer_task.input_data, &layer_task.task_id, priority, batch_size)?;
                 tasks.extend(batch_tasks);
             }
         } else if expert_split {
-            return self.split_by_expert(input_data, parent_task_id, priority);
+            let num_experts_to_use = (self.model_info.num_experts as f32 * expert_ratio).round() as usize;
+            let expert_tasks = self.split_by_expert(input_data, parent_task_id, priority)?;
+            tasks.extend(expert_tasks.into_iter().take(num_experts_to_use));
         } else if layer_split {
-            return self.split_by_layer(input_data, parent_task_id, priority);
+            let num_layers_to_use = (self.model_info.num_layers as f32 * layer_ratio).round() as usize;
+            let layer_tasks = self.split_by_layer(input_data, parent_task_id, priority)?;
+            tasks.extend(layer_tasks.into_iter().take(num_layers_to_use));
         } else {
             return self.split_by_batch(input_data, parent_task_id, priority, batch_size);
         }
@@ -308,23 +393,23 @@ impl TaskSplitter {
                     dependencies.insert(task.task_id.clone(), Vec::new());
                 }
             }
-            SplitStrategy::Hybrid { expert_split, layer_split, .. } => {
+            SplitStrategy::Hybrid { expert_split, layer_split, expert_ratio, layer_ratio, .. } => {
                 // 混合策略的依赖关系
                 if *expert_split && *layer_split {
                     // 层内专家并行，层间顺序
-                    let experts_per_layer = self.model_info.num_experts;
-                    let layers = self.model_info.num_layers;
+                    let num_experts_to_use = (self.model_info.num_experts as f32 * expert_ratio).round() as usize;
+                    let num_layers_to_use = (self.model_info.num_layers as f32 * layer_ratio).round() as usize;
                     
-                    for layer_id in 0..layers {
-                        for expert_id in 0..experts_per_layer {
-                            let task_idx = layer_id * experts_per_layer + expert_id;
+                    for layer_id in 0..num_layers_to_use {
+                        for expert_id in 0..num_experts_to_use {
+                            let task_idx = layer_id * num_experts_to_use + expert_id;
                             let mut deps = Vec::new();
                             
                             // 同一层内的专家任务没有依赖
                             // 不同层之间有依赖关系
                             if layer_id > 0 {
-                                for prev_expert in 0..experts_per_layer {
-                                    let prev_task_idx = (layer_id - 1) * experts_per_layer + prev_expert;
+                                for prev_expert in 0..num_experts_to_use {
+                                    let prev_task_idx = (layer_id - 1) * num_experts_to_use + prev_expert;
                                     if prev_task_idx < tasks.len() {
                                         deps.push(tasks[prev_task_idx].task_id.clone());
                                     }
@@ -351,6 +436,54 @@ impl TaskSplitter {
     /// 合并任务结果
     pub fn merge_results(&self, results: &[Vec<u8>], gate_weights: Option<GateWeights>) -> Result<Vec<u8>> {
         self.result_merger.merge_results(results, gate_weights, &self.strategy)
+    }
+
+    /// 验证拆分结果
+    pub fn verify_split_results(&self, tasks: &[MoeTask], original_input: &[u8]) -> Result<bool> {
+        // 检查任务数量是否合理
+        let expected_count = match &self.strategy {
+            SplitStrategy::ByExpert => self.model_info.num_experts,
+            SplitStrategy::ByLayer => self.model_info.num_layers,
+            SplitStrategy::ByBatch { batch_size } => {
+                (original_input.len() + batch_size - 1) / batch_size
+            }
+            SplitStrategy::Hybrid { expert_split, layer_split, expert_ratio, layer_ratio, .. } => {
+                if *expert_split && *layer_split {
+                    let num_experts = (self.model_info.num_experts as f32 * expert_ratio).round() as usize;
+                    let num_layers = (self.model_info.num_layers as f32 * layer_ratio).round() as usize;
+                    num_experts * num_layers
+                } else if *expert_split {
+                    (self.model_info.num_experts as f32 * expert_ratio).round() as usize
+                } else if *layer_split {
+                    (self.model_info.num_layers as f32 * layer_ratio).round() as usize
+                } else {
+                    0
+                }
+            }
+        };
+
+        if tasks.len() != expected_count {
+            println!("警告：任务数量 {} 与期望数量 {} 不匹配", tasks.len(), expected_count);
+            return Ok(false);
+        }
+
+        // 检查任务状态
+        for task in tasks {
+            if !matches!(task.status, TaskStatus::Pending) {
+                println!("警告：任务 {} 状态异常: {:?}", task.task_id, task.status);
+                return Ok(false);
+            }
+        }
+
+        // 检查输入数据完整性
+        let total_input_size: usize = tasks.iter().map(|t| t.input_data.len()).sum();
+        if total_input_size < original_input.len() {
+            println!("警告：拆分后的总输入大小 {} 小于原始输入大小 {}", total_input_size, original_input.len());
+            return Ok(false);
+        }
+
+        println!("拆分结果验证通过");
+        Ok(true)
     }
 }
 
